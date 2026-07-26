@@ -89,32 +89,70 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          mkdir -p dist
+          root="$PWD"
+          rm -rf dist stage
+          mkdir -p dist stage
 
-          take() {  # take <source name> <name in the release>
+          take() {  # take <name in .pio/build> <name inside the zip>
             if [ -f "$build/$1" ]; then
-              cp "$build/$1" "dist/$2"
+              cp "$build/$1" "$stage/$2"
             else
               echo "note: $build/$1 was not produced, skipping"
             fi
           }
 
+          flash_notes() {  # flash_notes <destination>
+          cat > "$1" <<EOF
+          y_automation $version - $env_name
+
+          Flash a blank chip (bootloader, partition table and app in one image):
+
+            esptool --port <PORT> write-flash 0x0 factory.bin
+
+          Update just the application, keeping the bootloader in place:
+
+            esptool --port <PORT> write-flash 0x10000 firmware.bin
+
+          factory.bin is the reliable path. bootloader.bin (0x0) and
+          partitions.bin (0x8000) are included for piecemeal flashing, but note
+          that a from-scratch manual flash also needs boot_app0.bin at 0xe000,
+          which ships with the ESP32 Arduino core rather than this release.
+
+          firmware.elf carries the debug symbols; keep it if you need to decode a
+          crash backtrace.
+
+          This archive is the "$env_name" build:
+            esp32-c3-devkitm-1  UART0 through the on-board USB-to-UART bridge
+            esp32-c3-usbcdc     native USB Serial/JTAG (USB vendor id 303A)
+          EOF
+          }
+
           for env_name in $ENVIRONMENTS; do
             build=".pio/build/$env_name"
-            base="y_automation-$version-$env_name"
-            # firmware.bin flashes at 0x10000; the factory image covers the whole
-            # layout and can be written at 0x0 on a blank chip.
-            take firmware.bin         "$base-firmware.bin"
-            take firmware.factory.bin "$base-factory.bin"
-            take firmware.elf         "$base-firmware.elf"
-            take bootloader.bin       "$base-bootloader.bin"
-            take partitions.bin       "$base-partitions.bin"
+            stage="stage/$env_name"
+            mkdir -p "$stage"
+
+            take firmware.bin         firmware.bin
+            take firmware.factory.bin factory.bin
+            take bootloader.bin       bootloader.bin
+            take partitions.bin       partitions.bin
+            take firmware.elf         firmware.elf
+            flash_notes "$stage/FLASH.txt"
+
+            # One grab-and-flash archive per environment.  python -m zipfile
+            # keeps this runnable anywhere, without depending on the `zip` tool.
+            ( cd "$stage" && python -m zipfile -c \
+                "$root/dist/y_automation-$version-$env_name-firmware.zip" . )
           done
 
           # The desktop app ships with the release so a binary and its control
           # panel are always the same vintage.
-          zip -qr "dist/y_automation-$version-studio.zip" app \
-            -x 'app/__pycache__/*' 'app/*.pyc'
+          mkdir -p stage/studio
+          cp -r app stage/studio/app
+          rm -rf stage/studio/app/__pycache__
+          find stage/studio/app -name '*.pyc' -delete
+          ( cd stage/studio && python -m zipfile -c \
+              "$root/dist/y_automation-$version-studio.zip" app )
 
           cd dist
           sha256sum y_automation-* > SHA256SUMS.txt
@@ -129,22 +167,30 @@ jobs:
 
           ## Which firmware do I need?
 
-          | File | Use it when |
+          Download one archive:
+
+          | Archive | Use it when |
           | --- | --- |
-          | \`*-esp32-c3-devkitm-1-*\` | the board is cabled through its USB-to-UART bridge (CP210x) |
-          | \`*-esp32-c3-usbcdc-*\` | the board is cabled straight to the SoC (native USB Serial/JTAG, VID 303A) |
+          | \`y_automation-$version-esp32-c3-devkitm-1-firmware.zip\` | the board is cabled through its USB-to-UART bridge (CP210x) |
+          | \`y_automation-$version-esp32-c3-usbcdc-firmware.zip\` | the board is cabled straight to the SoC (native USB Serial/JTAG, VID 303A) |
 
           Not sure? Check the port's USB vendor id: \`303A\` means native USB,
           anything else means the bridge. The studio app labels this for you.
 
+          Each archive holds \`factory.bin\`, \`firmware.bin\`, \`bootloader.bin\`,
+          \`partitions.bin\`, the \`firmware.elf\` symbols, and a \`FLASH.txt\`
+          with the offsets.
+
           ## Flashing
 
           \`\`\`sh
+          unzip y_automation-$version-<env>-firmware.zip
+
           # blank chip, everything in one image
-          esptool --port COM12 write-flash 0x0 y_automation-$version-<env>-factory.bin
+          esptool --port COM12 write-flash 0x0 factory.bin
 
           # application only, keeping the existing bootloader
-          esptool --port COM12 write-flash 0x10000 y_automation-$version-<env>-firmware.bin
+          esptool --port COM12 write-flash 0x10000 firmware.bin
           \`\`\`
 
           ## Desktop app
@@ -162,8 +208,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            dist/* \
-            --title "y_automation ${{ steps.version.outputs.version }}" \
-            --notes-file NOTES.md \
-            --verify-tag
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          title="y_automation ${{ steps.version.outputs.version }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Re-running (workflow_dispatch, or a re-pushed tag) must leave
+            # exactly what this build produced, so clear the old assets first
+            # instead of merging two sets of file names.
+            echo "Release $tag exists, replacing its assets"
+            gh release view "$tag" --json assets --jq '.assets[].name' \
+              | while read -r asset; do
+                  [ -n "$asset" ] || continue
+                  echo "  removing $asset"
+                  gh release delete-asset "$tag" "$asset" --yes
+                done
+            gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --title "$title" --notes-file NOTES.md
+          else
+            gh release create "$tag" dist/* \
+              --title "$title" \
+              --notes-file NOTES.md \
+              --verify-tag
+          fi

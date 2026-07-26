@@ -369,21 +369,34 @@ The workflow **fails on purpose if the tag does not match `FW_VERSION`**, so a
 binary can never report a version different from the release it ships in. Bump
 `include/config.h` first, then tag.
 
-Each release carries, for both environments:
+A release carries four assets:
 
-| Asset | Flash at | Purpose |
+| Asset | Contents |
+| --- | --- |
+| `…-esp32-c3-devkitm-1-firmware.zip` | the USB-to-UART bridge build |
+| `…-esp32-c3-usbcdc-firmware.zip` | the native USB Serial/JTAG build |
+| `…-studio.zip` | the desktop app, so firmware and control panel are always the same vintage |
+| `SHA256SUMS.txt` | checksums |
+
+Each firmware archive unzips flat, ready to flash:
+
+| File | Flash at | Purpose |
 | --- | --- | --- |
-| `…-factory.bin` | `0x0` | everything in one image, for a blank chip |
-| `…-firmware.bin` | `0x10000` | application only, keeps the existing bootloader |
-| `…-bootloader.bin` | `0x0` | for flashing pieces individually |
-| `…-partitions.bin` | `0x8000` | partition table |
-| `…-firmware.elf` | — | symbols, for decoding a crash backtrace |
+| `factory.bin` | `0x0` | everything in one image, for a blank chip |
+| `firmware.bin` | `0x10000` | application only, keeps the existing bootloader |
+| `bootloader.bin` | `0x0` | for flashing pieces individually |
+| `partitions.bin` | `0x8000` | partition table |
+| `firmware.elf` | — | symbols, for decoding a crash backtrace |
+| `FLASH.txt` | — | the offsets and commands, restated in the archive |
 
-plus `…-studio.zip` (the desktop app, so firmware and control panel are always
-the same vintage) and `SHA256SUMS.txt`.
+`factory.bin` is the reliable path. Flashing the pieces individually onto a
+blank chip also needs `boot_app0.bin` at `0xe000`, which ships with the ESP32
+Arduino core rather than with this release.
 
 `workflow_dispatch` is also enabled, so a release can be rebuilt from an
-existing tag through the Actions tab without re-tagging.
+existing tag through the Actions tab without re-tagging. Re-running replaces the
+release's assets with exactly what that build produced, rather than leaving two
+generations of file names side by side.
 
 Note that this is the only workflow, so a build break would first surface at tag
 time. Say the word if you want a CI job that builds on every push as well.
