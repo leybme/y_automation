@@ -31,6 +31,15 @@ namespace io {
 void begin() {
   g_lock = xSemaphoreCreateMutex();
   Serial.begin(Y_SERIAL_BAUD);
+
+#if ARDUINO_USB_CDC_ON_BOOT
+  // On the native USB CDC a host that stops draining the endpoint would
+  // otherwise block each write for ~2 s (100 ms x 20 retries).  That stalls the
+  // worker while it holds the output mutex, the command queue backs up, and the
+  // reader stops draining USB RX as well - the whole firmware appears hung
+  // until the host comes back.  Bound the wait so output is dropped instead.
+  Serial.setTxTimeoutMs(20);
+#endif
   // The native USB CDC endpoint enumerates a moment after boot; give the host
   // a chance to attach so the banner is not lost.  Never block forever, the
   // firmware has to run headless too.
