@@ -1,0 +1,4 @@
+# y_automation studio
+# Tkinter ships with the standard CPython installer on Windows and macOS.
+# On Debian/Ubuntu install it with: sudo apt install python3-tk
+pyserial>=3.5

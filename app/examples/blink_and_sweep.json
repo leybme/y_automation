@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "start",
+      "x": 60,
+      "y": 50,
+      "params": {},
+      "links": { "next": "n2" }
+    },
+    {
+      "id": "n2",
+      "type": "repeat",
+      "x": 60,
+      "y": 170,
+      "params": { "count": 5 },
+      "links": { "loop": "n3", "done": "n6" }
+    },
+    {
+      "id": "n3",
+      "type": "digital",
+      "x": 360,
+      "y": 150,
+      "params": { "pin": 2, "level": "TOGGLE" },
+      "links": { "next": "n4" }
+    },
+    {
+      "id": "n4",
+      "type": "delay",
+      "x": 360,
+      "y": 290,
+      "params": { "ms": 300 },
+      "links": { "next": "n2" }
+    },
+    {
+      "id": "n6",
+      "type": "servo",
+      "x": 60,
+      "y": 400,
+      "params": { "pin": 4, "angle": 0 },
+      "links": { "next": "n7" }
+    },
+    {
+      "id": "n7",
+      "type": "delay",
+      "x": 60,
+      "y": 520,
+      "params": { "ms": 600 },
+      "links": { "next": "n8" }
+    },
+    {
+      "id": "n8",
+      "type": "servo",
+      "x": 360,
+      "y": 520,
+      "params": { "pin": 4, "angle": 180 },
+      "links": { "next": "n9" }
+    },
+    {
+      "id": "n9",
+      "type": "delay",
+      "x": 660,
+      "y": 520,
+      "params": { "ms": 600 },
+      "links": { "next": "n10" }
+    },
+    {
+      "id": "n10",
+      "type": "log",
+      "x": 660,
+      "y": 400,
+      "params": { "text": "blink and sweep complete" },
+      "links": {}
+    }
+  ]
+}
