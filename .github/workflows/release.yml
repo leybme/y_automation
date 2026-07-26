@@ -1,0 +1,169 @@
+name: Release
+
+# Push a version tag to cut a release:
+#
+#   1. bump FW_VERSION in include/config.h
+#   2. git commit -am "Release 1.1.0"
+#   3. git tag -a v1.1.0 -m "v1.1.0" && git push origin main --follow-tags
+#
+# The tag must match FW_VERSION, otherwise the build is failed on purpose so a
+# binary can never report a version different from the release it ships in.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build and release, e.g. v1.0.0'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  ENVIRONMENTS: esp32-c3-devkitm-1 esp32-c3-usbcdc
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve the version
+        id: version
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (version $version)"
+
+      - name: Verify the tag matches FW_VERSION
+        run: |
+          fw=$(sed -n 's/^#define FW_VERSION "\([^"]*\)".*/\1/p' include/config.h)
+          want="${{ steps.version.outputs.version }}"
+          echo "include/config.h -> $fw"
+          echo "tag              -> $want"
+          if [ -z "$fw" ]; then
+            echo "::error::Could not read FW_VERSION from include/config.h"
+            exit 1
+          fi
+          if [ "$fw" != "$want" ]; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} does not match FW_VERSION \"$fw\". Bump include/config.h and re-tag."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware
+        run: |
+          set -euo pipefail
+          for env_name in $ENVIRONMENTS; do
+            echo "::group::$env_name"
+            pio run -e "$env_name"
+            echo "::endgroup::"
+          done
+
+      - name: Package artifacts
+        id: package
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+
+          take() {  # take <source name> <name in the release>
+            if [ -f "$build/$1" ]; then
+              cp "$build/$1" "dist/$2"
+            else
+              echo "note: $build/$1 was not produced, skipping"
+            fi
+          }
+
+          for env_name in $ENVIRONMENTS; do
+            build=".pio/build/$env_name"
+            base="y_automation-$version-$env_name"
+            # firmware.bin flashes at 0x10000; the factory image covers the whole
+            # layout and can be written at 0x0 on a blank chip.
+            take firmware.bin         "$base-firmware.bin"
+            take firmware.factory.bin "$base-factory.bin"
+            take firmware.elf         "$base-firmware.elf"
+            take bootloader.bin       "$base-bootloader.bin"
+            take partitions.bin       "$base-partitions.bin"
+          done
+
+          # The desktop app ships with the release so a binary and its control
+          # panel are always the same vintage.
+          zip -qr "dist/y_automation-$version-studio.zip" app \
+            -x 'app/__pycache__/*' 'app/*.pyc'
+
+          cd dist
+          sha256sum y_automation-* > SHA256SUMS.txt
+          ls -la
+
+      - name: Write release notes
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          cat > NOTES.md <<EOF
+          FreeRTOS GPIO automation firmware for the ESP32-C3, plus the
+          \`y_automation studio\` desktop app.
+
+          ## Which firmware do I need?
+
+          | File | Use it when |
+          | --- | --- |
+          | \`*-esp32-c3-devkitm-1-*\` | the board is cabled through its USB-to-UART bridge (CP210x) |
+          | \`*-esp32-c3-usbcdc-*\` | the board is cabled straight to the SoC (native USB Serial/JTAG, VID 303A) |
+
+          Not sure? Check the port's USB vendor id: \`303A\` means native USB,
+          anything else means the bridge. The studio app labels this for you.
+
+          ## Flashing
+
+          \`\`\`sh
+          # blank chip, everything in one image
+          esptool --port COM12 write-flash 0x0 y_automation-$version-<env>-factory.bin
+
+          # application only, keeping the existing bootloader
+          esptool --port COM12 write-flash 0x10000 y_automation-$version-<env>-firmware.bin
+          \`\`\`
+
+          ## Desktop app
+
+          \`\`\`sh
+          unzip y_automation-$version-studio.zip
+          pip install -r app/requirements.txt
+          python app/main.py
+          \`\`\`
+
+          Checksums are in \`SHA256SUMS.txt\`.
+          EOF
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/* \
+            --title "y_automation ${{ steps.version.outputs.version }}" \
+            --notes-file NOTES.md \
+            --verify-tag

@@ -261,9 +261,25 @@ python app/main.py
 Only `pyserial` is needed; Tkinter ships with the standard Python installer on
 Windows and macOS (`sudo apt install python3-tk` on Debian/Ubuntu).
 
-Pick the port, press **Connect**, and the app sends `ID` to confirm the firmware
-is there. **Dry run** executes a flow without a device, logging every command it
-would have sent — useful for checking a sequence before wiring anything up.
+The board is selected for you: the app ranks serial ports by USB vendor id and
+preselects the most likely one, so a Bluetooth virtual port never wins over a
+real board. Recognised ports are listed first and tagged with their vendor.
+
+| Vendor id | Shown as | Typical hardware |
+| --- | --- | --- |
+| `303A` | Espressif | native USB Serial/JTAG on the SoC itself |
+| `10C4` | Silicon Labs | CP210x bridge, e.g. ESP32-C3-DevKitM-1 |
+| `1A86` | QinHeng | CH340 / CH9102 bridge |
+| `0403` | FTDI | FT232R bridge |
+
+Anything else is still listed and selectable, just never auto-picked. Press
+**Refresh** after plugging a board in; a port you chose yourself is kept as long
+as it is still present. The vendor also tells you which firmware you need —
+`303A` means the `esp32-c3-usbcdc` build, anything else means the default one.
+
+Press **Connect** and the app sends `ID` to confirm the firmware is there.
+**Dry run** executes a flow without a device, logging every command it would
+have sent — useful for checking a sequence before wiring anything up.
 
 ### 3.2 Building a flow
 
@@ -333,7 +349,46 @@ The console at the bottom shows every line in both directions (`>` sent,
 
 ---
 
-## 4. Troubleshooting
+## 4. Releasing
+
+Pushing a `v*` tag builds both firmware environments on GitHub Actions and
+publishes a release with the binaries attached
+([.github/workflows/release.yml](.github/workflows/release.yml)).
+
+```sh
+# 1. bump the version the firmware reports over ID
+#    include/config.h -> #define FW_VERSION "1.1.0"
+git commit -am "Release 1.1.0"
+
+# 2. tag it and push
+git tag -a v1.1.0 -m "v1.1.0"
+git push origin main --follow-tags
+```
+
+The workflow **fails on purpose if the tag does not match `FW_VERSION`**, so a
+binary can never report a version different from the release it ships in. Bump
+`include/config.h` first, then tag.
+
+Each release carries, for both environments:
+
+| Asset | Flash at | Purpose |
+| --- | --- | --- |
+| `…-factory.bin` | `0x0` | everything in one image, for a blank chip |
+| `…-firmware.bin` | `0x10000` | application only, keeps the existing bootloader |
+| `…-bootloader.bin` | `0x0` | for flashing pieces individually |
+| `…-partitions.bin` | `0x8000` | partition table |
+| `…-firmware.elf` | — | symbols, for decoding a crash backtrace |
+
+plus `…-studio.zip` (the desktop app, so firmware and control panel are always
+the same vintage) and `SHA256SUMS.txt`.
+
+`workflow_dispatch` is also enabled, so a release can be rebuilt from an
+existing tag through the Actions tab without re-tagging.
+
+Note that this is the only workflow, so a build break would first surface at tag
+time. Say the word if you want a CI job that builds on every push as well.
+
+## 5. Troubleshooting
 
 **No reply at all.** Check you flashed the environment matching your cable path
 (§1.3). Press **Reset** in the app, or `pio device monitor` and look for the

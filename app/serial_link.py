@@ -21,6 +21,19 @@ TAGGED = re.compile(r"^(\d+):(.*)$")
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT = 3.0
 
+# USB vendor IDs that show up on ESP32 boards, best candidate first.  0x303A is
+# the SoC's own USB peripheral (ESP32-C3/S2/S3/C6 native USB Serial/JTAG); the
+# rest are the USB-to-UART bridges devkits are built around.  Ranking them means
+# a board is picked over the Bluetooth virtual ports Windows tends to enumerate.
+USB_VENDORS: tuple[tuple[int, str], ...] = (
+    (0x303A, "Espressif"),      # native USB Serial/JTAG
+    (0x10C4, "Silicon Labs"),   # CP210x, e.g. ESP32-C3-DevKitM-1
+    (0x1A86, "QinHeng"),        # CH340 / CH9102
+    (0x0403, "FTDI"),           # FT232R
+)
+_VENDOR_RANK = {vid: i for i, (vid, _) in enumerate(USB_VENDORS)}
+_VENDOR_NAME = dict(USB_VENDORS)
+
 
 @dataclass
 class Response:
@@ -45,16 +58,63 @@ class _Pending:
         self.response: Optional[Response] = None
 
 
+@dataclass
+class PortInfo:
+    device: str                  # "COM12" / "/dev/ttyUSB0"
+    description: str
+    vid: Optional[int] = None
+    pid: Optional[int] = None
+    serial_number: str = ""
+
+    @property
+    def vendor(self) -> str:
+        """Recognised board vendor, or "" for anything unrelated."""
+        return _VENDOR_NAME.get(self.vid, "")
+
+    @property
+    def is_esp(self) -> bool:
+        return self.vid in _VENDOR_RANK
+
+    @property
+    def rank(self) -> int:
+        return _VENDOR_RANK.get(self.vid, len(USB_VENDORS))
+
+    @property
+    def label(self) -> str:
+        parts = [self.device]
+        if self.description and self.description != "n/a":
+            parts.append(self.description)
+        text = " - ".join(parts)
+        return f"{text}  [{self.vendor}]" if self.vendor else text
+
+
 def available_ports() -> List[str]:
     return [p.device for p in list_ports.comports()]
 
 
+def scan_ports() -> List[PortInfo]:
+    """Every serial port, likely ESP32 boards first."""
+    found = [
+        PortInfo(p.device, (p.description or "").strip(), p.vid, p.pid,
+                 p.serial_number or "")
+        for p in list_ports.comports()
+    ]
+    # Stable ordering: recognised vendors first in USB_VENDORS order, then the
+    # rest, alphabetically within each group.
+    found.sort(key=lambda p: (p.rank, p.device))
+    return found
+
+
+def pick_port(ports: List[PortInfo]) -> Optional[PortInfo]:
+    """The port to preselect, or None when nothing looks like a board."""
+    for port in ports:
+        if port.is_esp:
+            return port
+    return None
+
+
 def describe_ports() -> List[str]:
-    out = []
-    for p in list_ports.comports():
-        desc = (p.description or "").strip()
-        out.append(f"{p.device} - {desc}" if desc and desc != "n/a" else p.device)
-    return out
+    return [p.label for p in scan_ports()]
 
 
 class SerialLink:

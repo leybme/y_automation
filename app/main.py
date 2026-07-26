@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flow_canvas import FlowCanvas  # noqa: E402
 from nodes import NODE_TYPES, groups  # noqa: E402
 from runner import FlowRunner  # noqa: E402
-from serial_link import DEFAULT_BAUD, SerialLink, describe_ports  # noqa: E402
+from serial_link import DEFAULT_BAUD, SerialLink, pick_port, scan_ports  # noqa: E402
 
 BAUDS = ("115200", "230400", "460800", "921600")
 PALETTE_BG = "#f4f6fa"
@@ -45,6 +45,7 @@ class App(tk.Tk):
         self._drag_key: str | None = None
         self._ghost: tk.Toplevel | None = None
         self._prop_widgets: dict = {}
+        self._ports_by_label: dict[str, str] = {}
 
         try:
             ttk.Style().theme_use("clam")
@@ -385,17 +386,42 @@ class App(tk.Tk):
     # -- device actions -----------------------------------------------------
 
     def refresh_ports(self) -> None:
-        ports = describe_ports()
-        self.port_box.configure(values=ports)
-        if ports and not self.port_var.get():
-            self.port_var.set(ports[0])
+        """Rescans, keeping the user's choice and preselecting a board if not."""
+        ports = scan_ports()
+        self._ports_by_label = {p.label: p.device for p in ports}
+        self.port_box.configure(values=[p.label for p in ports])
+
+        current = self.port_var.get()
+        keep = self._ports_by_label.get(current)
+        if keep and any(p.device == keep for p in ports):
+            return  # the selected port is still there, leave it alone
+
+        best = pick_port(ports)
+        if best is not None:
+            self.port_var.set(best.label)
+            self._log("sys", f"detected {best.vendor} board on {best.device}")
+        elif ports:
+            self.port_var.set(ports[0].label)
+        else:
+            self.port_var.set("")
+
+    def _selected_port(self) -> str:
+        """Device name behind the combobox label (labels carry a description)."""
+        label = self.port_var.get().strip()
+        if not label:
+            return ""
+        device = getattr(self, "_ports_by_label", {}).get(label)
+        if device:
+            return device
+        # The user may have typed a bare device name in themselves.
+        return label.split(" - ")[0].strip()
 
     def toggle_connection(self) -> None:
         if self.link.is_open:
             self.link.close()
             self._set_connected(False)
             return
-        target = self.port_var.get().split(" - ")[0].strip()
+        target = self._selected_port()
         if not target:
             messagebox.showwarning("y_automation", "No serial port selected.")
             return
