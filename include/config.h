@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #define FW_NAME    "y_automation"
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.1.0"
 #define FW_PROTO   "1"
 
 #ifndef Y_SERIAL_BAUD
