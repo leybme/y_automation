@@ -20,6 +20,9 @@
 // Bit i set => GPIO i may be driven by the firmware.
 // Default: GPIO0..GPIO10.  GPIO11..GPIO17 are wired to the SPI flash,
 // GPIO18/GPIO19 are the native USB D-/D+ and GPIO20/GPIO21 are UART0.
+// When using the USB-CDC build (esp32-c3-usbcdc), UART0 is not used for the
+// serial interface so GPIO20/GPIO21 are available; that env sets
+// Y_PIN_MASK=0x003007FFUL (GPIO0..GPIO10 + GPIO20..GPIO21).
 // Override with -D Y_PIN_MASK=0x... in platformio.ini if your board differs.
 #ifndef Y_PIN_MASK
 #define Y_PIN_MASK 0x000007FFUL
