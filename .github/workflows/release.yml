@@ -159,11 +159,17 @@ jobs:
             mkdir -p "$stage"
 
             take firmware.bin         firmware.bin
-            take firmware.factory.bin factory.bin
-            take bootloader.bin       bootloader.bin
-            take partitions.bin       partitions.bin
             take firmware.elf         firmware.elf
-            take firmware.uf2         firmware.uf2
+            case "$env_name" in
+              rpi-pico|rpi-pico2)
+                take firmware.uf2     firmware.uf2
+                ;;
+              *)
+                take firmware.factory.bin factory.bin
+                take bootloader.bin       bootloader.bin
+                take partitions.bin       partitions.bin
+                ;;
+            esac
             flash_notes "$stage/FLASH.txt"
 
             # One grab-and-flash archive per environment.  python -m zipfile

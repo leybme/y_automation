@@ -104,6 +104,12 @@ void rp2PwmApply(uint8_t pin, uint32_t hz, uint16_t duty_dp) {
   analogWrite(pin, (int)counts);
 }
 
+void rp2ServoApply(uint8_t pin, uint16_t pulse_us) {
+  uint32_t period_us = 1000000UL / Y_SERVO_HZ;
+  uint16_t ddp = (uint16_t)((uint32_t)pulse_us * 1000UL / period_us);
+  rp2PwmApply(pin, Y_SERVO_HZ, ddp);
+}
+
 void rp2PwmStop(uint8_t pin) {
   // Park the pin as a plain input; the PWM peripheral keeps running but the
   // pin is disconnected from it.
@@ -294,10 +300,7 @@ PinErr setFunc(uint8_t pin, PinFunc f) {
       ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
 #else
       s.pulse_us = (uint16_t)servoPulseUs(s);
-      // Servo duty expressed as duty_dp = pulse_us / period_us * 1000
-      uint32_t period_us = 1000000UL / Y_SERVO_HZ;
-      uint16_t ddp = (uint16_t)((uint32_t)s.pulse_us * 1000UL / period_us);
-      rp2PwmApply(pin, Y_SERVO_HZ, ddp);
+      rp2ServoApply(pin, s.pulse_us);
 #endif
       break;
     }
@@ -369,9 +372,7 @@ PinErr setServoAngle(uint8_t pin, int32_t angle_dd) {
 #ifndef ARDUINO_ARCH_RP2040
   ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
 #else
-  uint32_t period_us = 1000000UL / Y_SERVO_HZ;
-  uint16_t ddp = (uint16_t)((uint32_t)s.pulse_us * 1000UL / period_us);
-  rp2PwmApply(pin, Y_SERVO_HZ, ddp);
+  rp2ServoApply(pin, s.pulse_us);
 #endif
   return PE_OK;
 }
@@ -399,9 +400,7 @@ PinErr setServoUs(uint8_t pin, int32_t us) {
 #ifndef ARDUINO_ARCH_RP2040
   ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
 #else
-  uint32_t period_us = 1000000UL / Y_SERVO_HZ;
-  uint16_t ddp = (uint16_t)((uint32_t)s.pulse_us * 1000UL / period_us);
-  rp2PwmApply(pin, Y_SERVO_HZ, ddp);
+  rp2ServoApply(pin, s.pulse_us);
 #endif
   return PE_OK;
 }
