@@ -6,11 +6,23 @@
 #include "command.h"
 
 // ---------------------------------------------------------------------------
-// LEDC compatibility.  Arduino-ESP32 3.x drives LEDC per pin and allocates the
-// channel itself; 2.x wants an explicit channel number.  Everything above this
-// shim works in terms of pins only.
+// Platform PWM abstraction.
+//
+// ESP32 family  – uses the LEDC peripheral.  Arduino-ESP32 3.x drives LEDC
+//                 per-pin (channel allocation is internal); 2.x wants an
+//                 explicit channel number.
+//
+// RP2040/RP2350 – uses the hardware PWM slices exposed through analogWrite()
+//                 plus analogWriteFreq() / analogWriteRange() from the
+//                 earlephilhower arduino-pico core.  Every GPIO has a PWM
+//                 slice, so there is no channel-exhaustion issue.
 // ---------------------------------------------------------------------------
 namespace {
+
+// ---------------------------------------------------------------------------
+// ESP32 LEDC back-end
+// ---------------------------------------------------------------------------
+#ifndef ARDUINO_ARCH_RP2040
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 
@@ -59,7 +71,7 @@ void ledcDuty(uint8_t pin, int8_t channel, uint32_t duty) {
   if (channel >= 0) ledcWrite((uint8_t)channel, duty);
 }
 
-#endif
+#endif  // ESP_ARDUINO_VERSION_MAJOR
 
 // Highest duty resolution the LEDC source clock can sustain at `hz`.
 uint8_t resolutionFor(uint32_t hz) {
@@ -70,22 +82,85 @@ uint8_t resolutionFor(uint32_t hz) {
   return bits;
 }
 
+#endif  // !ARDUINO_ARCH_RP2040
+
+// ---------------------------------------------------------------------------
+// RP2040/RP2350 PWM back-end (arduino-pico core, earlephilhower)
+//
+// analogWriteFreq(hz)  – sets the PWM frequency for ALL subsequent
+//                        analogWrite() calls on that slice (per GPIO pair).
+// analogWriteRange(n)  – sets the full-scale count (resolution).
+// analogWrite(pin, v)  – sets duty; range 0..Y_RP2_PWM_RANGE.
+// ---------------------------------------------------------------------------
+#ifdef ARDUINO_ARCH_RP2040
+
+// Use 10-bit resolution (0..1023) for a reasonable duty step size.
+static constexpr uint32_t Y_RP2_PWM_RANGE = 1023;
+
+void rp2PwmApply(uint8_t pin, uint32_t hz, uint16_t duty_dp) {
+  analogWriteFreq(hz);
+  analogWriteRange(Y_RP2_PWM_RANGE);
+  uint32_t counts = (uint32_t)(((uint64_t)duty_dp * Y_RP2_PWM_RANGE) / 1000ULL);
+  analogWrite(pin, (int)counts);
+}
+
+void rp2ServoApply(uint8_t pin, uint16_t pulse_us) {
+  uint32_t period_us = 1000000UL / Y_SERVO_HZ;
+  uint16_t ddp = (uint16_t)((uint32_t)pulse_us * 1000UL / period_us);
+  rp2PwmApply(pin, Y_SERVO_HZ, ddp);
+}
+
+void rp2PwmStop(uint8_t pin) {
+  // Park the pin as a plain input; the PWM peripheral keeps running but the
+  // pin is disconnected from it.
+  pinMode(pin, INPUT);
+}
+
+#endif  // ARDUINO_ARCH_RP2040
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+
 PinState g_state[Y_MAX_PINS];
-uint8_t  g_attached_count = 0;
+
+#ifndef ARDUINO_ARCH_RP2040
+uint8_t g_attached_count = 0;
+#endif
 
 // Tears down whatever the pin was doing and parks it as a floating input.
 void teardown(uint8_t pin) {
   PinState &s = g_state[pin];
+#ifndef ARDUINO_ARCH_RP2040
   if (s.attached) {
     ledcClose(pin, &s.channel);
     s.attached = false;
     s.attached_hz = 0;
     if (g_attached_count) g_attached_count--;
   }
+#else
+  if (s.func == PF_SERVO || s.func == PF_FREQ) {
+    rp2PwmStop(pin);
+  }
+#endif
   pinMode(pin, INPUT);
   s.func = PF_NONE;
   s.level = 0;
 }
+
+// ---------------------------------------------------------------------------
+// Helpers shared by both backends
+// ---------------------------------------------------------------------------
+
+uint32_t servoPulseUs(const PinState &s) {
+  return s.min_us +
+         ((uint32_t)(s.max_us - s.min_us) * s.angle_dd) / 1800UL;
+}
+
+// ---------------------------------------------------------------------------
+// ESP32 LEDC servo/freq helpers
+// ---------------------------------------------------------------------------
+#ifndef ARDUINO_ARCH_RP2040
 
 uint32_t servoDutyFor(uint16_t pulse_us, uint8_t bits) {
   const uint32_t period_us = 1000000UL / Y_SERVO_HZ;
@@ -101,8 +176,6 @@ uint32_t freqDutyFor(uint16_t duty_dp, uint8_t bits) {
 PinErr ledcEnsure(uint8_t pin, uint32_t hz) {
   PinState &s = g_state[pin];
 
-  // Compare against what the hardware is actually running, not against the
-  // requested value: callers may already have recorded their intent.
   if (s.attached && s.attached_hz == hz) return PE_OK;
 
   if (s.attached) {
@@ -113,8 +186,6 @@ PinErr ledcEnsure(uint8_t pin, uint32_t hz) {
     return PE_NO_CHANNEL;
   }
 
-  // Start from the best resolution the source clock should sustain and step
-  // down until the driver accepts it, rather than trusting the estimate.
   for (uint8_t bits = resolutionFor(hz); bits >= 1; --bits) {
     if (ledcOpen(pin, hz, bits, &s.channel)) {
       s.attached = true;
@@ -127,6 +198,8 @@ PinErr ledcEnsure(uint8_t pin, uint32_t hz) {
   return PE_HW;
 }
 
+#endif  // !ARDUINO_ARCH_RP2040
+
 }  // namespace
 
 namespace pins {
@@ -135,8 +208,10 @@ void begin() {
   memset(g_state, 0, sizeof(g_state));
   for (uint8_t p = 0; p < Y_MAX_PINS; ++p) {
     g_state[p].func = PF_NONE;
+#ifndef ARDUINO_ARCH_RP2040
     g_state[p].channel = -1;
     g_state[p].attached_hz = 0;
+#endif
     g_state[p].min_us = Y_SERVO_MIN_US;
     g_state[p].max_us = Y_SERVO_MAX_US;
     g_state[p].angle_dd = 900;
@@ -218,17 +293,25 @@ PinErr setFunc(uint8_t pin, PinFunc f) {
       pinMode(pin, INPUT_PULLDOWN);
       break;
     case PF_SERVO: {
+#ifndef ARDUINO_ARCH_RP2040
       PinErr e = ledcEnsure(pin, Y_SERVO_HZ);
       if (e != PE_OK) return e;
-      s.pulse_us = (uint16_t)(s.min_us +
-                              ((uint32_t)(s.max_us - s.min_us) * s.angle_dd) / 1800UL);
+      s.pulse_us = (uint16_t)servoPulseUs(s);
       ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
+#else
+      s.pulse_us = (uint16_t)servoPulseUs(s);
+      rp2ServoApply(pin, s.pulse_us);
+#endif
       break;
     }
     case PF_FREQ: {
+#ifndef ARDUINO_ARCH_RP2040
       PinErr e = ledcEnsure(pin, s.freq_hz);
       if (e != PE_OK) return e;
       ledcDuty(pin, s.channel, freqDutyFor(s.duty_dp, s.bits));
+#else
+      rp2PwmApply(pin, s.freq_hz, s.duty_dp);
+#endif
       break;
     }
   }
@@ -263,8 +346,6 @@ PinErr readDigital(uint8_t pin, int *out) {
   if (!valid(pin)) return PE_BAD_PIN;
   PinState &s = g_state[pin];
 
-  // Reading an output reports what we are driving; anything not already an
-  // input is switched to a plain input first.
   if (s.func == PF_SERVO || s.func == PF_FREQ) return PE_WRONG_FUNC;
   if (s.func == PF_NONE) {
     PinErr e = setFunc(pin, PF_IN);
@@ -287,9 +368,12 @@ PinErr setServoAngle(uint8_t pin, int32_t angle_dd) {
     if (e != PE_OK) return e;
   }
 
-  s.pulse_us = (uint16_t)(s.min_us +
-                          ((uint32_t)(s.max_us - s.min_us) * s.angle_dd) / 1800UL);
+  s.pulse_us = (uint16_t)servoPulseUs(s);
+#ifndef ARDUINO_ARCH_RP2040
   ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
+#else
+  rp2ServoApply(pin, s.pulse_us);
+#endif
   return PE_OK;
 }
 
@@ -313,7 +397,11 @@ PinErr setServoUs(uint8_t pin, int32_t us) {
                             (uint32_t)(s.max_us - s.min_us));
   }
 
+#ifndef ARDUINO_ARCH_RP2040
   ledcDuty(pin, s.channel, servoDutyFor(s.pulse_us, s.bits));
+#else
+  rp2ServoApply(pin, s.pulse_us);
+#endif
   return PE_OK;
 }
 
@@ -337,12 +425,17 @@ PinErr setFreq(uint8_t pin, uint32_t hz, int32_t duty_dp) {
   PinState &s = g_state[pin];
   if (s.func != PF_FREQ && s.func != PF_NONE) teardown(pin);
 
+#ifndef ARDUINO_ARCH_RP2040
   PinErr e = ledcEnsure(pin, hz);
-  if (e != PE_OK) return e;  // leave the recorded state alone on failure
-
+  if (e != PE_OK) return e;
   s.freq_hz = hz;
   s.duty_dp = (uint16_t)duty_dp;
   ledcDuty(pin, s.channel, freqDutyFor(s.duty_dp, s.bits));
+#else
+  s.freq_hz = hz;
+  s.duty_dp = (uint16_t)duty_dp;
+  rp2PwmApply(pin, hz, (uint16_t)duty_dp);
+#endif
   s.func = PF_FREQ;
   return PE_OK;
 }
@@ -355,7 +448,11 @@ PinErr setDuty(uint8_t pin, int32_t duty_dp) {
   if (s.func != PF_FREQ) return PE_WRONG_FUNC;
 
   s.duty_dp = (uint16_t)duty_dp;
+#ifndef ARDUINO_ARCH_RP2040
   ledcDuty(pin, s.channel, freqDutyFor(s.duty_dp, s.bits));
+#else
+  rp2PwmApply(pin, s.freq_hz, s.duty_dp);
+#endif
   return PE_OK;
 }
 

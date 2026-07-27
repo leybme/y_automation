@@ -10,8 +10,12 @@
 #define Y_SERIAL_BAUD 115200
 #endif
 
-// ESP32-C3 exposes GPIO0..GPIO21.
+// Number of GPIO slots in the pin-state array.
+// Overridden per-board via -D Y_MAX_PINS=... in platformio.ini.
+// Defaults to 22 (ESP32-C3: GPIO0..GPIO21).
+#ifndef Y_MAX_PINS
 #define Y_MAX_PINS 22
+#endif
 
 // Bit i set => GPIO i may be driven by the firmware.
 // Default: GPIO0..GPIO10.  GPIO11..GPIO17 are wired to the SPI flash,
@@ -28,19 +32,32 @@
 #define Y_LINE_MAX   160
 #define Y_MAX_TOKENS 8
 
-// Depth of the reader -> worker command queue.
+// Depth of the reader -> worker command queue (FreeRTOS targets only).
 #define Y_QUEUE_LEN 24
 
-// LEDC: the ESP32-C3 has 6 channels and a 14 bit maximum duty resolution.
-#define Y_LEDC_MAX_BITS 14
-#define Y_LEDC_CHANNELS 6
+// ---------------------------------------------------------------------------
+// LEDC / PWM configuration (not used on RP2040/RP2350).
+// ---------------------------------------------------------------------------
+#ifndef ARDUINO_ARCH_RP2040
 
-// Source clock the duty resolution is budgeted against.  Measured on hardware:
-// the low speed LEDC timers run from the 40 MHz crystal, not the 80 MHz APB
-// clock, and the driver rejects any request where hz * 2^bits exceeds it.
-// Under-estimating this is safe (it only costs duty resolution), and
-// ledcEnsure() steps the resolution down anyway if the driver still refuses.
+// Maximum duty resolution supported by the LEDC hardware.
+#define Y_LEDC_MAX_BITS 14
+
+// Number of LEDC channels available.
+// ESP32-C3: 6, ESP32-S3: 8, ESP32 (original): 16.
+// Override per-board via -D Y_LEDC_CHANNELS=... in platformio.ini.
+#ifndef Y_LEDC_CHANNELS
+#define Y_LEDC_CHANNELS 6
+#endif
+
+// Source clock the duty resolution is budgeted against.
+// ESP32-C3: 40 MHz crystal; ESP32 / ESP32-S3: 80 MHz APB.
+// Override per-board via -D Y_LEDC_SRC_HZ=... in platformio.ini.
+#ifndef Y_LEDC_SRC_HZ
 #define Y_LEDC_SRC_HZ 40000000UL
+#endif
+
+#endif  // !ARDUINO_ARCH_RP2040
 
 // Servo defaults (microseconds of pulse width at Y_SERVO_HZ).
 #define Y_SERVO_HZ     50
@@ -51,7 +68,7 @@
 #define Y_FREQ_MIN_HZ 1UL
 #define Y_FREQ_MAX_HZ 10000000UL
 
-// Task tuning.
+// Task tuning (FreeRTOS targets only).
 #define Y_READER_STACK 4096
 #define Y_WORKER_STACK 4096
 #define Y_READER_PRIO  3

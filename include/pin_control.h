@@ -33,10 +33,12 @@ struct PinState {
   uint16_t max_us;
   uint32_t freq_hz;        // PF_FREQ frequency, last one accepted by the driver
   uint16_t duty_dp;        // PF_FREQ duty in 0.1 % (0..1000)
+#ifndef ARDUINO_ARCH_RP2040
   uint8_t  bits;           // LEDC resolution in use
   int8_t   channel;        // LEDC channel (Arduino core 2.x bookkeeping)
   bool     attached;       // LEDC currently driving the pin
   uint32_t attached_hz;    // frequency the hardware is actually configured for
+#endif
 };
 
 namespace pins {
