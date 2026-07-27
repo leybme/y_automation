@@ -7,18 +7,23 @@
 #include "tasks.h"
 
 // ---------------------------------------------------------------------------
-// Chip identification helper
+// Chip identification and reset helpers
+//
+// The ESP32 cores expose these on the global `ESP` object, the arduino-pico
+// core on `rp2040`; everything above this line stays board-agnostic.
 // ---------------------------------------------------------------------------
 #ifndef ARDUINO_ARCH_RP2040
-static inline const char *chipModel() { return ESP.getChipModel(); }
+const char *chipModel() { return ESP.getChipModel(); }
+void chipRestart() { ESP.restart(); }
 #else
-static inline const char *chipModel() {
+const char *chipModel() {
 #if defined(ARDUINO_RASPBERRY_PI_PICO2)
   return "RP2350";
 #else
   return "RP2040";
 #endif
 }
+void chipRestart() { rp2040.restart(); }
 #endif
 
 void setup() {

@@ -342,7 +342,7 @@ void execute(const Command &cmd) {
 
     case CMD_ID:
       io::reply(seq, "OK ID name=%s ver=%s proto=%s chip=%s pinmask=0x%08X", FW_NAME,
-                FW_VERSION, FW_PROTO, ESP.getChipModel(), (unsigned)Y_PIN_MASK);
+                FW_VERSION, FW_PROTO, chipModel(), (unsigned)Y_PIN_MASK);
       break;
 
     case CMD_HELP: {
@@ -524,7 +524,7 @@ void execute(const Command &cmd) {
     case CMD_REBOOT:
       io::reply(seq, "OK REBOOT");
       delay(100);
-      ESP.restart();
+      chipRestart();
       break;
 
     default:

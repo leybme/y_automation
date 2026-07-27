@@ -57,6 +57,13 @@
 #define Y_LEDC_SRC_HZ 40000000UL
 #endif
 
+#else  // ARDUINO_ARCH_RP2040
+
+// analogWrite() runs at one fixed duty resolution, so the resolution reported
+// on the wire is a constant here instead of being picked per frequency the way
+// LEDC does it.
+#define Y_RP2_PWM_BITS 10
+
 #endif  // !ARDUINO_ARCH_RP2040
 
 // Servo defaults (microseconds of pulse width at Y_SERVO_HZ).
@@ -73,3 +80,10 @@
 #define Y_WORKER_STACK 4096
 #define Y_READER_PRIO  3
 #define Y_WORKER_PRIO  2
+
+// Human-readable chip name for the banner and the ID reply, e.g. "ESP32-C3"
+// or "RP2350".  Defined in main.cpp.
+const char *chipModel();
+
+// Reset the MCU; does not return.  Defined in main.cpp.
+void chipRestart();

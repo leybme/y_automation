@@ -95,7 +95,7 @@ uint8_t resolutionFor(uint32_t hz) {
 #ifdef ARDUINO_ARCH_RP2040
 
 // Use 10-bit resolution (0..1023) for a reasonable duty step size.
-static constexpr uint32_t Y_RP2_PWM_RANGE = 1023;
+static constexpr uint32_t Y_RP2_PWM_RANGE = (1UL << Y_RP2_PWM_BITS) - 1UL;
 
 void rp2PwmApply(uint8_t pin, uint32_t hz, uint16_t duty_dp) {
   analogWriteFreq(hz);
@@ -211,6 +211,8 @@ void begin() {
 #ifndef ARDUINO_ARCH_RP2040
     g_state[p].channel = -1;
     g_state[p].attached_hz = 0;
+#else
+    g_state[p].bits = Y_RP2_PWM_BITS;
 #endif
     g_state[p].min_us = Y_SERVO_MIN_US;
     g_state[p].max_us = Y_SERVO_MAX_US;
