@@ -23,7 +23,7 @@ permissions:
   contents: write
 
 env:
-  ENVIRONMENTS: esp32-c3-devkitm-1 esp32-c3-usbcdc
+  ENVIRONMENTS: esp32-c3-devkitm-1 esp32-c3-usbcdc esp32-devkitc esp32-s3-devkitc-1 esp32-s3-usbcdc rpi-pico rpi-pico2
 
 jobs:
   release:
@@ -102,6 +102,27 @@ jobs:
           }
 
           flash_notes() {  # flash_notes <destination>
+          case "$env_name" in
+            rpi-pico|rpi-pico2)
+          cat > "$1" <<EOF
+          y_automation $version - $env_name
+
+          Flash with picotool or drag-and-drop:
+
+            picotool load -f firmware.uf2
+
+          Or hold BOOTSEL while plugging in the board, then copy firmware.uf2
+          to the USB mass-storage drive that appears.
+
+          firmware.elf carries the debug symbols; keep it if you need to decode
+          a crash backtrace.
+
+          This archive is the "$env_name" build:
+            rpi-pico   Raspberry Pi Pico  (RP2040)
+            rpi-pico2  Raspberry Pi Pico 2 (RP2350)
+          EOF
+            ;;
+            *)
           cat > "$1" <<EOF
           y_automation $version - $env_name
 
@@ -122,9 +143,14 @@ jobs:
           crash backtrace.
 
           This archive is the "$env_name" build:
-            esp32-c3-devkitm-1  UART0 through the on-board USB-to-UART bridge
-            esp32-c3-usbcdc     native USB Serial/JTAG (USB vendor id 303A)
+            esp32-c3-devkitm-1   ESP32-C3 – UART0 through the USB-to-UART bridge
+            esp32-c3-usbcdc      ESP32-C3 – native USB Serial/JTAG (VID 303A)
+            esp32-devkitc        ESP32 – UART0 through the USB-to-UART bridge
+            esp32-s3-devkitc-1   ESP32-S3 – UART0 through the USB-to-UART bridge
+            esp32-s3-usbcdc      ESP32-S3 – native USB Serial/JTAG (VID 303A)
           EOF
+            ;;
+          esac
           }
 
           for env_name in $ENVIRONMENTS; do
@@ -137,6 +163,7 @@ jobs:
             take bootloader.bin       bootloader.bin
             take partitions.bin       partitions.bin
             take firmware.elf         firmware.elf
+            take firmware.uf2         firmware.uf2
             flash_notes "$stage/FLASH.txt"
 
             # One grab-and-flash archive per environment.  python -m zipfile
@@ -162,26 +189,27 @@ jobs:
         run: |
           version="${{ steps.version.outputs.version }}"
           cat > NOTES.md <<EOF
-          FreeRTOS GPIO automation firmware for the ESP32-C3, plus the
-          \`y_automation studio\` desktop app.
+          GPIO automation firmware for ESP32 and Raspberry Pi Pico families,
+          plus the \`y_automation studio\` desktop app.
 
           ## Which firmware do I need?
 
           Download one archive:
 
-          | Archive | Use it when |
-          | --- | --- |
-          | \`y_automation-$version-esp32-c3-devkitm-1-firmware.zip\` | the board is cabled through its USB-to-UART bridge (CP210x) |
-          | \`y_automation-$version-esp32-c3-usbcdc-firmware.zip\` | the board is cabled straight to the SoC (native USB Serial/JTAG, VID 303A) |
+          | Archive | Board | Connection |
+          | --- | --- | --- |
+          | \`y_automation-$version-esp32-c3-devkitm-1-firmware.zip\` | ESP32-C3 | USB-to-UART bridge (CP210x) |
+          | \`y_automation-$version-esp32-c3-usbcdc-firmware.zip\` | ESP32-C3 | native USB Serial/JTAG (VID 303A) |
+          | \`y_automation-$version-esp32-devkitc-firmware.zip\` | ESP32 | USB-to-UART bridge |
+          | \`y_automation-$version-esp32-s3-devkitc-1-firmware.zip\` | ESP32-S3 | USB-to-UART bridge |
+          | \`y_automation-$version-esp32-s3-usbcdc-firmware.zip\` | ESP32-S3 | native USB Serial/JTAG (VID 303A) |
+          | \`y_automation-$version-rpi-pico-firmware.zip\` | Raspberry Pi Pico (RP2040) | USB CDC |
+          | \`y_automation-$version-rpi-pico2-firmware.zip\` | Raspberry Pi Pico 2 (RP2350) | USB CDC |
 
-          Not sure? Check the port's USB vendor id: \`303A\` means native USB,
-          anything else means the bridge. The studio app labels this for you.
+          Not sure which ESP32 variant? Check the port's USB vendor id: \`303A\` means
+          native USB, anything else means the bridge. The studio app labels this for you.
 
-          Each archive holds \`factory.bin\`, \`firmware.bin\`, \`bootloader.bin\`,
-          \`partitions.bin\`, the \`firmware.elf\` symbols, and a \`FLASH.txt\`
-          with the offsets.
-
-          ## Flashing
+          ## Flashing – ESP32 family
 
           \`\`\`sh
           unzip y_automation-$version-<env>-firmware.zip
@@ -191,6 +219,16 @@ jobs:
 
           # application only, keeping the existing bootloader
           esptool --port COM12 write-flash 0x10000 firmware.bin
+          \`\`\`
+
+          ## Flashing – Raspberry Pi Pico / Pico 2
+
+          \`\`\`sh
+          unzip y_automation-$version-<env>-firmware.zip
+
+          # drag-and-drop: hold BOOTSEL, plug in, copy firmware.uf2 to the drive
+          # or with picotool:
+          picotool load -f firmware.uf2
           \`\`\`
 
           ## Desktop app

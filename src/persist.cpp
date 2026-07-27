@@ -1,17 +1,37 @@
 #include "persist.h"
 
 #include <Arduino.h>
-#include <Preferences.h>
 #include <string.h>
 
 #include "command.h"
 #include "config.h"
 
+// ---------------------------------------------------------------------------
+// Persistence back-end selection.
+//
+// ESP32 family  – uses the NVS Preferences library (flash key-value store).
+// RP2040/RP2350 – uses the EEPROM emulation library that ships with the
+//                 earlephilhower arduino-pico core (backed by a dedicated
+//                 flash sector).
+// ---------------------------------------------------------------------------
+
+#ifndef ARDUINO_ARCH_RP2040
+#include <Preferences.h>
+#else
+#include <EEPROM.h>
+#endif
+
 namespace {
 
+constexpr uint8_t kLayout = 1;
+
+#ifndef ARDUINO_ARCH_RP2040
 constexpr const char *kNamespace = "yauto";
 constexpr const char *kBlobKey   = "pindefs";
-constexpr uint8_t     kLayout    = 1;
+#else
+// EEPROM offset 0 holds the entire blob.
+constexpr int kEepromOffset = 0;
+#endif
 
 struct Blob {
   uint8_t    layout;
@@ -20,8 +40,10 @@ struct Blob {
   PinDefault pins[Y_MAX_PINS];
 };
 
+#ifndef ARDUINO_ARCH_RP2040
 Preferences g_prefs;
-Blob        g_blob;
+#endif
+Blob g_blob;
 
 void resetBlob() {
   memset(&g_blob, 0, sizeof(g_blob));
@@ -38,7 +60,12 @@ void resetBlob() {
 }
 
 bool store() {
+#ifndef ARDUINO_ARCH_RP2040
   return g_prefs.putBytes(kBlobKey, &g_blob, sizeof(g_blob)) == sizeof(g_blob);
+#else
+  EEPROM.put(kEepromOffset, g_blob);
+  return EEPROM.commit();
+#endif
 }
 
 }  // namespace
@@ -47,6 +74,8 @@ namespace persist {
 
 void begin() {
   resetBlob();
+
+#ifndef ARDUINO_ARCH_RP2040
   if (!g_prefs.begin(kNamespace, false)) return;
 
   Blob tmp;
@@ -54,9 +83,19 @@ void begin() {
   if (n == sizeof(tmp) && tmp.layout == kLayout && tmp.count == Y_MAX_PINS) {
     g_blob = tmp;
   } else if (n != 0) {
-    // Stored by an older/newer layout: start clean rather than guess.
     store();
   }
+#else
+  EEPROM.begin(sizeof(Blob));
+  Blob tmp;
+  EEPROM.get(kEepromOffset, tmp);
+  if (tmp.layout == kLayout && tmp.count == Y_MAX_PINS) {
+    g_blob = tmp;
+  } else {
+    // First boot or layout changed: persist the clean defaults.
+    store();
+  }
+#endif
 }
 
 const PinDefault &get(uint8_t pin) { return g_blob.pins[pin]; }
